@@ -5,14 +5,12 @@
 #include <unistd.h>
 #include <time.h>
 
-// --- RÉGLAGES DE L'AFFICHAGE ---
 #define POS_SAISIE_X 37
 #define POS_SAISIE_Y 32
-#define MAX_CARACT 8 
+#define MAX_CARACT 9 
 #define POS_LOG_X 5
 #define POS_LOG_Y 35
 
-// --- COORDONNÉES CAISSE (Tes valeurs exactes) ---
 #define CAISSE_TOTAL_X 133
 #define CAISSE_TOTAL_Y 29
 #define CAISSE_PAYE_X 141
@@ -23,7 +21,6 @@
 #define FINAL_MSG_X 62
 #define FINAL_MSG_Y 42
 
-// --- DONNÉES ---
 #define NB_CAT 3          
 #define ART_PAR_CAT 15    
 #define NB_PANIERS 2      
@@ -50,17 +47,12 @@ const char emojis[NB_CAT][ART_PAR_CAT][10] = {
 char paniers[NB_PANIERS][CAP_PANIER][4];
 int nb_articles[NB_PANIERS] = {0, 0}; 
 
-// Coordonnées Paniers (Visuel)
 int panier1_X[9] = {76, 79, 82, 76, 79, 82, 76, 79, 82};
 int panier1_Y[9] = {28, 28, 28, 29, 29, 29, 30, 30, 30};
 int panier2_X[9] = {91, 94, 97, 91, 94, 97, 91, 94, 97};
 int panier2_Y[9] = {28, 28, 28, 29, 29, 29, 30, 30, 30};
 
-// --- FONCTIONS ---
-
-void placer_curseur(int x, int y) {
-    printf("\033[%d;%dH", y, x);
-}
+void placer_curseur(int x, int y) { printf("\033[%d;%dH", y, x); }
 
 void effacer_zone(int x, int y, int longueur) {
     placer_curseur(x, y);
@@ -68,7 +60,7 @@ void effacer_zone(int x, int y, int longueur) {
 }
 
 void charger_vitrine(const char *nom_fichier) {
-    system("clear");
+    if (system("clear") == -1) {}
     FILE *f = fopen(nom_fichier, "r");
     if (f == NULL) exit(1);
     char ligne[512];
@@ -76,168 +68,138 @@ void charger_vitrine(const char *nom_fichier) {
     fclose(f);
 }
 
+float calculer_total(void) {
+    float sum = 0.0;
+    for (int p = 0; p < NB_PANIERS; p++)
+        for (int i = 0; i < nb_articles[p]; i++)
+            for (int c = 0; c < NB_CAT; c++)
+                for (int a = 0; a < ART_PAR_CAT; a++)
+                    if (strcmp(paniers[p][i], codes[c][a]) == 0) sum += prix[c][a];
+    return sum;
+}
+
+void maj_caisse_live(void) {
+    effacer_zone(CAISSE_TOTAL_X, CAISSE_TOTAL_Y, 8);
+    placer_curseur(CAISSE_TOTAL_X, CAISSE_TOTAL_Y);
+    printf("%.2f €", calculer_total());
+}
+
+void redessiner_paniers(void) {
+    for (int i = 0; i < 9; i++) {
+        effacer_zone(panier1_X[i], panier1_Y[i], 2);
+        effacer_zone(panier2_X[i], panier2_Y[i], 2);
+    }
+    for (int p = 0; p < NB_PANIERS; p++) {
+        for (int i = 0; i < nb_articles[p]; i++) {
+            int x = (p == 0) ? panier1_X[i] : panier2_X[i];
+            int y = (p == 0) ? panier1_Y[i] : panier2_Y[i];
+            for (int c = 0; c < NB_CAT; c++)
+                for (int a = 0; a < ART_PAR_CAT; a++)
+                    if (strcmp(paniers[p][i], codes[c][a]) == 0) {
+                        placer_curseur(x, y); printf("%s", emojis[c][a]);
+                    }
+        }
+
+
+
+
+
+        
+    }
+}
+
 void saisir_clavier(char *destination, int limite) {
     struct termios oldt, newt;
-    int i = 0; char c;
+    int i = 0, c;
     tcgetattr(STDIN_FILENO, &oldt);
     newt = oldt;
-    newt.c_lflag &= ~(ICANON | ECHO); 
+    newt.c_lflag &= ~(unsigned int)(ICANON | ECHO); 
     tcsetattr(STDIN_FILENO, TCSANOW, &newt);
     while (1) {
         c = getchar();
-        if (c == '\n') break; 
-        if (c == 127 || c == 8) { 
-            if (i > 0) { i--; printf("\b \b"); }
-        } 
+        if (c == '\n' || c == EOF) break; 
+        if ((c == 127 || c == 8) && i > 0) { i--; printf("\b \b"); } 
         else if (i < limite && c >= 32 && c <= 126) {
-            destination[i++] = c;
-            putchar(c); 
+            destination[i++] = (char)c; putchar(c); 
         }
     }
     destination[i] = '\0';
     tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
 }
 
-// --- LOGIQUE PANIERS ---
-
-void maj_visuel_panier(int p, int slot, int cat, int art) {
-    int x = (p == 0) ? panier1_X[slot] : panier2_X[slot];
-    int y = (p == 0) ? panier1_Y[slot] : panier2_Y[slot];
-    placer_curseur(x, y);
-    printf("%s", emojis[cat][art]);
-    fflush(stdout);
-}
-
-int compter_articles(const char *code) {
-    int total = 0;
-    for (int p = 0; p < NB_PANIERS; p++) {
-        for (int i = 0; i < nb_articles[p]; i++) {
-            if (strcmp(paniers[p][i], code) == 0) total++;
+void traiter_suppression(const char *commande) {
+    int num_panier = 0; char code_art[10];
+    if (sscanf(commande, "SUP %d %s", &num_panier, code_art) != 2) return;
+    int p = num_panier - 1;
+    if (p < 0 || p >= NB_PANIERS) return;
+    for (int i = nb_articles[p] - 1; i >= 0; i--) {
+        if (strcmp(paniers[p][i], code_art) == 0) {
+            for (int j = i; j < nb_articles[p] - 1; j++) strcpy(paniers[p][j], paniers[p][j+1]);
+            nb_articles[p]--;
+            redessiner_paniers(); maj_caisse_live();
+            effacer_zone(POS_LOG_X, POS_LOG_Y, 70); placer_curseur(POS_LOG_X, POS_LOG_Y);
+            printf("ARTICLE %s SUPPRIME DU PANIER %d", code_art, num_panier);
+            return;
         }
     }
-    return total;
 }
 
-int tenter_ajout(const char *code) {
-    int p = rand() % 2; 
-    if (nb_articles[p] >= CAP_PANIER) p = (p == 0) ? 1 : 0;
-    if (nb_articles[p] >= CAP_PANIER) return -1; 
-    strcpy(paniers[p][nb_articles[p]], code);
-    int p_final = p;
-    nb_articles[p]++;
-    return p_final; 
-}
-
-// --- LOGIQUE ÉTAPE 6 (La Caisse avec la condition Panier Vide) ---
-
-float calculer_total() {
-    float sum = 0;
-    for (int p = 0; p < NB_PANIERS; p++) {
-        for (int i = 0; i < nb_articles[p]; i++) {
-            for (int c = 0; c < NB_CAT; c++) {
-                for (int a = 0; a < ART_PAR_CAT; a++) {
-                    if (strcmp(paniers[p][i], codes[c][a]) == 0) sum += prix[c][a];
-                }
-            }
-        }
-    }
-    return sum;
-}
-
-void procedure_caisse() {
-    float total = calculer_total();
-    float paye = 0;
-
-    // --- LA PETITE CONDITION : SI LE PANIER EST VIDE ---
-    if (total <= 0) {
-        placer_curseur(CAISSE_TOTAL_X, CAISSE_TOTAL_Y);
-        printf("VIDE (0.00 €)");
-        // On ne demande pas de paiement, on saute directement au message final
-    } else {
-        // 1. Ligne : TOTAL A PAYER
-        placer_curseur(CAISSE_TOTAL_X, CAISSE_TOTAL_Y);
-        printf("%.2f  €", total);
-        
-        // 2. Ligne : SAISIR VOTRE MONTANT
-        placer_curseur(CAISSE_PAYE_X, CAISSE_PAYE_Y);
-        fflush(stdout);
-        if (scanf("%f", &paye) != 1) return;
-
-        // 3. Ligne : MONNAIE
-        placer_curseur(CAISSE_MONNAIE_X, CAISSE_MONNAIE_Y);
-        if (paye >= total) {
-            printf("%.2f €", paye - total);
-        } else {
-            printf("INSUFFISANT");
-        }
-    }
-
-    // 4. Message Final (Toujours affiché)
-    placer_curseur(FINAL_MSG_X, FINAL_MSG_Y);
-    printf("VOS COURSES SONT PRÊTES MERCI DE VOTRE VISITE");
-    fflush(stdout);
-}
-
-// --- MAIN ---
-
-int main() {
+int main(void) {
     char code_saisi[MAX_CARACT + 1];
-    srand(time(NULL)); 
-
-    for (int p = 0; p < NB_PANIERS; p++) {
+    srand((unsigned int)time(NULL)); 
+    for (int p = 0; p < NB_PANIERS; p++)
         for (int i = 0; i < CAP_PANIER; i++) strcpy(paniers[p][i], ""); 
-    }
-
     charger_vitrine("maquette.txt");
-
     while (1) {
         effacer_zone(POS_SAISIE_X, POS_SAISIE_Y, MAX_CARACT);
         placer_curseur(POS_SAISIE_X, POS_SAISIE_Y);
         saisir_clavier(code_saisi, MAX_CARACT);
-
         if (strcmp(code_saisi, "FIN") == 0) break; 
-
-        int trouve = 0;
-        int cat_id = -1, art_id = -1;
-
-        for (int c = 0; c < NB_CAT; c++) {
-            for (int a = 0; a < ART_PAR_CAT; a++) {
-                if (strcmp(code_saisi, codes[c][a]) == 0) {
-                    trouve = 1; cat_id = c; art_id = a;
-                    break;
-                }
+        effacer_zone(POS_LOG_X, POS_LOG_Y, 70); placer_curseur(POS_LOG_X, POS_LOG_Y);
+        if (strncmp(code_saisi, "SUP ", 4) == 0) traiter_suppression(code_saisi);
+        else {
+            int trouve = 0, cid = 0, aid = 0;
+            for (int c = 0; c < NB_CAT; c++) {
+                for (int a = 0; a < ART_PAR_CAT; a++)
+                    if (strcmp(code_saisi, codes[c][a]) == 0) { trouve = 1; cid = c; aid = a; break; }
+                if (trouve) break;
             }
-            if (trouve) break;
-        }
-
-        effacer_zone(POS_LOG_X, POS_LOG_Y, 70); 
-        placer_curseur(POS_LOG_X, POS_LOG_Y);
-
-        if (trouve) {
-            if (compter_articles(code_saisi) >= 3) {
-                printf("Erreur : %s est deja présent 3 fois !", code_saisi);
-            } else {
-                int p_choisi = tenter_ajout(code_saisi);
-                if (p_choisi != -1) {
-                    printf("CHOIX ARTICLE : %s %s", emojis[cat_id][art_id], code_saisi);
-                    maj_visuel_panier(p_choisi, nb_articles[p_choisi] - 1, cat_id, art_id);
-                    
-                    if (nb_articles[0] == CAP_PANIER && nb_articles[1] == CAP_PANIER) { 
-                        placer_curseur(POS_LOG_X, POS_LOG_Y + 1);
-                        printf("Paniers pleins ! Passage en caisse...");
-                        fflush(stdout); sleep(2); break;
+            if (trouve) {
+                int count = 0;
+                for(int p=0; p<NB_PANIERS; p++) 
+                    for(int i=0; i<nb_articles[p]; i++) 
+                        if(strcmp(paniers[p][i], code_saisi) == 0) count++;
+                if (count >= 3) printf("Erreur : %s est deja présent 3 fois !", code_saisi);
+                else {
+                    int p = rand() % 2;
+                    if (nb_articles[p] >= CAP_PANIER) p = 1 - p;
+                    if (nb_articles[p] < CAP_PANIER) {
+                        strcpy(paniers[p][nb_articles[p]++], code_saisi);
+                        redessiner_paniers(); maj_caisse_live();
+                        placer_curseur(POS_LOG_X, POS_LOG_Y); // FIX : Repositionne ici
+                        printf("CHOIX ARTICLE : %s %s", emojis[cid][aid], code_saisi);
+                        if (nb_articles[0] == 9 && nb_articles[1] == 9) break;
                     }
                 }
-            }
-        } else {
-            printf("Erreur : Code invalide !");
+            } else printf("Erreur : Code invalide !");
         }
         fflush(stdout);
     }
-
-    procedure_caisse();
-
-    placer_curseur(1, 45); 
-    printf("\n");
-    return 0;
+    float total = calculer_total(), paye = 0.0; char montant_str[9];
+    if (total > 0) {
+        do {
+            effacer_zone(CAISSE_PAYE_X, CAISSE_PAYE_Y, 8); placer_curseur(CAISSE_PAYE_X, CAISSE_PAYE_Y);
+            saisir_clavier(montant_str, 8); paye = (float)atof(montant_str);
+            if (paye < total) {
+                effacer_zone(POS_LOG_X, POS_LOG_Y, 70); placer_curseur(POS_LOG_X, POS_LOG_Y);
+                printf("MONTANT INSUFFISANT !");
+            }
+        } while (paye < total);
+        placer_curseur(CAISSE_MONNAIE_X, CAISSE_MONNAIE_Y); printf("%.2f €", paye - total);
+    } else {
+        placer_curseur(CAISSE_TOTAL_X, CAISSE_TOTAL_Y); printf("VIDE (0.00 €)");
+    }
+    placer_curseur(FINAL_MSG_X, FINAL_MSG_Y);
+    printf("VOS COURSES SONT PRÊTES MERCI DE VOTRE VISITE");
+    placer_curseur(1, 45); return 0;
 }
